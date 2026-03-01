@@ -76,30 +76,31 @@ async function chat(userId, conversationHistory, userProfile, calendarEvents) {
   const model = client.getGenerativeModel({ model: config.gemini.model });
   const systemPrompt = buildSystemPrompt(userProfile, calendarEvents);
 
-  const messages = conversationHistory.map(msg => ({
-    role: msg.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: msg.message }],
-  }));
+  // Build conversation as a single prompt with context
+  let fullPrompt = systemPrompt + '\n\n--- CONVERSACIÓN ---\n';
+  for (const msg of conversationHistory) {
+    const role = msg.role === 'assistant' ? 'Synapse' : 'Usuario';
+    fullPrompt += `${role}: ${msg.message}\n`;
+  }
+  fullPrompt += '\nSynapse:';
 
-  const chatSession = model.startChat({
-    history: messages.slice(0, -1),
-    systemInstruction: systemPrompt,
-  });
+  try {
+    const result = await model.generateContent(fullPrompt);
+    const response = result.response;
+    const text = response.text();
+    const usageMetadata = response.usageMetadata || {};
 
-  const lastMessage = messages[messages.length - 1];
-  const result = await chatSession.sendMessage(lastMessage.parts[0].text);
-  const response = result.response;
+    const usage = await trackUsage(userId, 'chat', {
+      promptTokens: usageMetadata.promptTokenCount || 0,
+      completionTokens: usageMetadata.candidatesTokenCount || 0,
+      model: config.gemini.model,
+    });
 
-  const text = response.text();
-  const usageMetadata = response.usageMetadata || {};
-
-  const usage = await trackUsage(userId, 'chat', {
-    promptTokens: usageMetadata.promptTokenCount || 0,
-    completionTokens: usageMetadata.candidatesTokenCount || 0,
-    model: config.gemini.model,
-  });
-
-  return { response: text, usage };
+    return { response: text, usage };
+  } catch (err) {
+    console.error('Gemini API error detail:', err.message);
+    throw err;
+  }
 }
 
 module.exports = { chat, buildSystemPrompt };
